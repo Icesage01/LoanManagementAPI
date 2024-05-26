@@ -57,46 +57,49 @@ class RestAPI
         $app = AppFactory::create();
         $app->addBodyParsingMiddleware();
 
-        $errorHandler = function (
-            Request $request,
-            Throwable $exception,
-            bool $displayErrorDetails,
-            bool $logErrors,
-            bool $logErrorDetails,
-            ?LoggerInterface $logger = null
-        ) use ($app) {
-            if ($this->_errorLogger) {
-                $message = $exception->getMessage();
-                $message .= " PAGE: {$_SERVER['REQUEST_URI']}.";
-                $message .= " REMOTE: {$_SERVER['REMOTE_ADDR']}";
+        $this->_initializeLoggers();
+        $this->_initializeDatabase();
+        $this->_initializeErrorHandler($app);
 
-                $this->_errorLogger->error($message);
-            }
-            
-            $payload = [
-                'status' => false,
-                'message' => $exception->getMessage(),
-                'code' => $exception->getCode()
-            ];
-            
-            $response = $app->getResponseFactory()->createResponse();
-            $response->getBody()->write(
-                json_encode($payload, JSON_UNESCAPED_UNICODE)
-            );
+        $app->add([$this, 'addJsonHeaderMiddleware']);
+        $this->_registerRoutes($app);
 
-            return $response
-                ->withAddedHeader('Content-type', 'application/json')
-                ->withStatus($exception->getCode());
-        };
+        $this->app = $app;
+    }
 
-        $errorMiddleware = $app->addErrorMiddleware(true, true, true);
-        $errorMiddleware->setDefaultErrorHandler($errorHandler);
-        
+
+    /**
+     * Main routes of application
+     * 
+     * @param object $app Slim\App
+     * 
+     * @return void
+     */
+    private function _registerRoutes($app)
+    {
+        $app->get('/', [$this, 'actionIndex']);
+        $app->get('/users', [$this, 'actionGetUsers']);
+        $app->get('/loans[/{id}]', [$this, 'actionGetLoans']);
+        $app->put('/loans/{id}', [$this, 'actionUpdateLoans']);
+        $app->post('/loans', [$this, 'actionCreateLoan']);
+        $app->delete('/loans/{id}', [$this, 'actionDeleteLoan']);
+    }
+
+
+    /**
+     * Initialize accept and error logs
+     * output files can be configured in config.ini
+     * inside [logs] header
+     * 
+     * @return void
+     */
+    private function _initializeLoggers(): void
+    {
         $config = @parse_ini_file('config.ini', true);
-
         $datetime = "Y-m-d H:i:s";
         $output = "[%datetime%][%level_name%] %message% %context% %extra%\n";
         $logFormatter = new LineFormatter($output, $datetime);
+
         $accessLogger = new Logger('access');
         $accessLogger->pushHandler(
             (new RotatingFileHandler(
@@ -120,63 +123,117 @@ class RestAPI
             ))->setFormatter($logFormatter)
         );
         $this->_errorLogger = $errorLogger;
+    }
 
-        try {
-            if (!isset($config['mysql'])) {
-                throw new Exception('Can\'t find [mysql] header inside INI file');
-            }
-            $db = $config['mysql'];
-            $mysqli = new mysqli(
-                $db['host'] ?? '',
-                $db['user'] ?? '',
-                $db['pass'] ?? '',
-                $db['database'] ?? '',
-                $db['port'] ?? 3306
-            );
-            if ($mysqli->connect_error) {
-                $errorLogger->error('MySQL connect error: ' . $e->getMessage());
-            }
-            $this->_mysqli = $mysqli;
-        } catch (Exception $e) {
-            $errorLogger->error($e->getMessage());
-            http_response_code(500);
-            header('Content-Type: application/json; charset=utf-8');
-            die(
-                json_encode(
-                    [
-                    'status' => false,
-                    'message' => 'internal error was raised'
-                    ], 448
-                )
-            );
+
+    /**
+     * Initialize MySQL connect
+     * and save it to class property
+     * 
+     * @return void
+     */
+    private function _initializeDatabase()
+    {
+        $config = @parse_ini_file('config.ini', true);
+        if (!isset($config['mysql'])) {
+            $this->_logAndTerminate('[mysql] header is missed in INI file', 500);
         }
 
-        // Add to every response JSON header and logger
-        $middleware = function ($request, $handler) {
-            $response = $handler->handle($request);
-            if ($response->getStatusCode() < 400) {
-                $message = $_SERVER['REMOTE_ADDR'];
-                $message .= " - {$_SERVER['REQUEST_METHOD']}";
-                $message .= " {$_SERVER['REQUEST_URI']}";
-                $this->_accessLogger->info(
-                    $message,
-                    $request->getParsedBody(),
-                    $response->getBody()
-                );
-            }
-            return $response->withAddedHeader('Content-type', 'application/json');
+        $db = $config['mysql'];
+        $mysqli = new mysqli(
+            $db['host'] ?? '',
+            $db['user'] ?? '',
+            $db['pass'] ?? '',
+            $db['database'] ?? '',
+            $db['port'] ?? 3306
+        );
+
+        if ($mysqli->connect_error) {
+            $this->_errorLogger->error(
+                'MySQL connect error: '
+                . $mysqli->connect_error
+            );
+            $this->_logAndTerminate('Internal error was raised', 500);
+        }
+
+        $this->_mysqli = $mysqli;
+    }
+
+
+    /** 
+     * Custom error handler
+     * catch all errors during execution
+     * then write them in logfile
+     * and return JSON answer to client
+     * 
+     * @param object $app Rest\App
+     * 
+     * @return void
+     */
+    private function _initializeErrorHandler($app)
+    {
+        $errorHandler = function (
+            Request $request,
+            Throwable $exception,
+            bool $displayErrorDetails,
+            bool $logErrors,
+            bool $logErrorDetails,
+            ?LoggerInterface $logger = null
+        ) use ($app) {
+            $this->_errorLogger->error(
+                $exception->getMessage(), [
+                'page' => $request->getUri()->getPath(),
+                'remote' => $request->getServerParams()['REMOTE_ADDR']
+                ]
+            );
+
+            $payload = [
+                'status' => false,
+                'message' => $exception->getMessage(),
+                'code' => $exception->getCode()
+            ];
+
+            $response = $app->getResponseFactory()->createResponse();
+            $response->getBody()->write(
+                json_encode(
+                    $payload,
+                    JSON_UNESCAPED_UNICODE
+                )
+            );
+
+            return $response
+                ->withHeader('Content-type', 'application/json')
+                ->withStatus($exception->getCode());
         };
-        $app->add($middleware);
 
-        // API Endpoints
-        $app->get('/', [$this, 'actionIndex']);
-        $app->get('/users', [$this, 'actionGetUsers']);
-        $app->get('/loans[/{id}]', [$this, 'actionGetLoans']);
-        $app->put('/loans/{id}', [$this, 'actionUpdateLoans']);
-        $app->post('/loans', [$this, 'actionCreateLoan']);
-        $app->delete('/loans/{id}', [$this, 'actionDeleteLoan']);
+        $errorMiddleware = $app->addErrorMiddleware(true, true, true);
+        $errorMiddleware->setDefaultErrorHandler($errorHandler);
+    }
 
-        $this->app = $app;
+
+    /**
+     * Catch all requests to API
+     * and write them to logfile, if errors not occured
+     * 
+     * @param Request $request from Psr\Http\Message\ServerRequestInterface
+     * @param object  $handler from Psr\Http\Message\ResponseInterface
+     * 
+     * @return void
+     */
+    public function addJsonHeaderMiddleware($request, $handler)
+    {
+        $response = $handler->handle($request);
+        if ($response->getStatusCode() < 400) {
+            $message = $_SERVER['REMOTE_ADDR'];
+            $message .= " - {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']}";
+            $this->_accessLogger->info(
+                $message, [
+                'body' => $request->getParsedBody(),
+                'response' => (string)$response->getBody()
+                ]
+            );
+        }
+        return $response->withHeader('Content-type', 'application/json');
     }
 
 
@@ -193,8 +250,7 @@ class RestAPI
     public function actionIndex(Request $request, Response $response, $args)
     {
         $data = ['status' => true, 'message' => 'it works!'];
-        $payload = json_encode($data, JSON_UNESCAPED_UNICODE);
-        $response->getBody()->write($payload);
+        $response->getBody()->write(json_encode($data, JSON_UNESCAPED_UNICODE));
         return $response;
     }
 
@@ -211,29 +267,21 @@ class RestAPI
     public function actionGetLoans(Request $request, Response $response, $args)
     {
         $condition = (isset($args['id'])) ? 'WHERE l.id = ' . (int) $args['id'] : '';
-        $sql = <<<SQL
-        SELECT *
-        FROM loans AS l
-          LEFT JOIN users AS u
-            ON l.user_id = u.id
-        {$condition}
-        ORDER BY l.create_time, amount
-        SQL;
+        $sql = "SELECT * FROM loans AS l LEFT JOIN users AS u ON l.user_id = u.id"
+             . " {$condition} ORDER BY l.create_time, amount";
+
         $res = $this->_mysqli->query($sql);
+        $responseMessage = ['status' => false, 'message' => 'empty data'];
+
         if ($res && $res->num_rows > 0) {
             $details = [];
             while ($row = $res->fetch_assoc()) {
                 $details[] = $row;
             }
             $responseMessage = [
-            'status' => true,
-            'message' => 'data got successfull',
-            'details' => $details
-            ];
-        } else {
-            $responseMessage = [
-            'status' => false,
-            'message' => 'can\'t get data by specified data'
+                'status' => true,
+                'message' => 'Data retrieved successfully',
+                'details' => $details
             ];
         }
     
@@ -255,18 +303,18 @@ class RestAPI
     public function actionGetUsers(Request $request, Response $response, $args)
     {
         $res = $this->_mysqli->query('SELECT * FROM users');
+        $responseMessage = ['status' => false, 'message' => 'Can\'t get data'];
+
         if ($res && $res->num_rows > 0) {
             $details = [];
             while ($row = $res->fetch_assoc()) {
                 $details[] = $row;
             }
             $responseMessage = [
-            'status' => true,
-            'message' => 'data got successfull',
-            'details' => $details
+                'status' => true,
+                'message' => 'Data retrieved successfully',
+                'details' => $details
             ];
-        } else {
-            throw new HttpException($request, "can't get data", 400);
         }
 
         $response->getBody()->write(json_encode($responseMessage, 448));
@@ -289,12 +337,7 @@ class RestAPI
         $loanId = (int) $args['id'];
         $data = $this->_getJSON($request);
         if ($data === null) {
-            $responseMessage = [
-            'status' => false,
-            'message' => 'Invalid JSON format'
-            ];
-            $response->getBody()->write(json_encode($responseMessage, 448));
-            return $response->withStatus(400);
+            return $this->respondWithError($response, 'Invalid JSON format', 400);
         }
 
         $validParams = ['user_id', 'amount', 'create_time', 'pay_time'];
@@ -307,24 +350,35 @@ class RestAPI
             settype($data[$param], 'int');
             $values[] = "{$param} = {$data[$param]}";
         }
+
+        if (empty($values)) {
+            return $this->respondWithError(
+                $response,
+                'No valid parameters provided',
+                400
+            );
+        }
+
         $values = join(',', $values);
 
         $sql = "UPDATE loans SET {$values} WHERE id = {$loanId} LIMIT 1";
         $status = false;
         try {
             $res = @$this->_mysqli->query($sql);
-            $message = 'Loan was successfull updated!';
-            $status = true;
+            $responseMessage = [
+                'status'  => true,
+                'message' => 'Loan was successfully updated!',
+                'code'    => 200
+            ];
         } catch (Exception $e) {
-            $message = ($e->getCode() == 1452)
-                    ? 'Specified user_id do not exists!'
-                    : 'Internal error was raised';
+            $responseMessage = [
+                'status'  => false,
+                'message' => $e->getCode() == 1452 
+                             ? 'Specified user_id does not exist!'
+                             : 'Internal error was raised',
+                'code'    => $e->getCode() == 1452 ? 400 : 500
+            ];
         }
-    
-        $responseMessage = [
-        'status' => $status,
-        'message' => $message
-        ];
 
         $response->getBody()->write(json_encode($responseMessage, 448));
         return $response;
@@ -345,28 +399,20 @@ class RestAPI
     {
         $data = $this->_getJSON($request);
         if ($data === null) {
-            $responseMessage = [
-            'status' => false,
-            'message' => 'Invalid JSON format'
-            ];
-            $response->getBody()->write(json_encode($responseMessage, 448));
-            return $response->withStatus(400);
+            return $this->respondWithError($response, 'Invalid JSON format', 400);
         }
         $requiredParams = ['user_id', 'amount', 'pay_time'];
         $values = [];
         foreach ($requiredParams as $param) {
-            if (isset($data[$param])) {
-                $values[] = (int) $data[$param];
-                continue;
+            if (!isset($data[$param])) {
+                return $this->respondWithError(
+                    $response,
+                    "Param \"{$param}\" is required!",
+                    400
+                );
             }
 
-            $responseMessage = [
-            'status' => false,
-            'message' => "Param \"{$param}\" is required!"
-            ];
-            $response->getBody()->write(json_encode($responseMessage, 448));
-            return $response
-                    ->withAddedHeader('Content-type', 'application/json');
+            $values[] = (int) $data[$param];
         }
         $values = join(', ', $values);
 
@@ -374,14 +420,14 @@ class RestAPI
         $res = $this->_mysqli->query($sql);
         if ($res) {
             $responseMessage = [
-            'status' => true,
-            'message' => 'success',
-            'row_id' => $this->_mysqli->insert_id
+                'status' => true,
+                'message' => 'success',
+                'row_id' => $this->_mysqli->insert_id
             ];
         } else {
             $responseMessage = [
-            'status' => false,
-            'message' => 'new loan create was failed!'
+                'status' => false,
+                'message' => 'Failed to create new loan'
             ];
         }
         $response->getBody()->write(json_encode($responseMessage, 448));
@@ -404,13 +450,13 @@ class RestAPI
         try {
             $this->_mysqli->query("DELETE FROM loans WHERE id = {$loanId} LIMIT 1");
             $responseMessage = [
-            'status' => true,
-            'message' => "Loan with ID {$loanId} was successfully deleted!"
+                'status' => true,
+                'message' => "Loan with ID {$loanId} was successfully deleted!"
             ];
         } catch (Exception $e) {
             $responseMessage = [
-            'status' => false,
-            'message' => 'Internal error was raised, cant delete specified loan!'
+                'status' => false,
+                'message' => 'Internal error was raised, cant delete specified loan!'
             ];
         }
     
@@ -443,6 +489,46 @@ class RestAPI
             $result = null;
         }
         return $result;
+    }
+
+
+    /**
+     * Tranform string to JSON,
+     * write it to response body and return with specified code
+     * 
+     * @param Response $response   from Psr\Http\Message\ResponseInterface
+     * @param string   $message    message that will be outputed to user
+     * @param int      $statusCode http code
+     * 
+     * @return Response
+     */
+    private function _respondWithError(
+        Response $response,
+        string $message,
+        int $statusCode
+    ): Response {
+        $responseMessage = ['status' => false, 'message' => $message];
+        $response->getBody()->write(json_encode($responseMessage, 448));
+        return $response->withStatus($statusCode);
+    }
+
+
+    /**
+     * If exception was raised or etc
+     * BEFORE error collector initalize
+     * then will write error to log and return code
+     * 
+     * @param string $message    message to output for user
+     * @param int    $statusCode exit code
+     * 
+     * @return void
+     */
+    private function _logAndTerminate(string $message, int $statusCode): void
+    {
+        $this->_errorLogger->error($message);
+        http_response_code($statusCode);
+        header('Content-Type: application/json; charset=utf-8');
+        die(json_encode(['status' => false, 'message' => $message], 448));
     }
 }
 
