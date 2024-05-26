@@ -1,4 +1,4 @@
-AddCharset UTF-8 .php
+AddCharset UTF-8 .phpgi
 
 RewriteEngine On
 RewriteCond %{REQUEST_FILENAME} !-f

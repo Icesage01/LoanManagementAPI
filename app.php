@@ -56,33 +56,33 @@ class RestAPI
     {
         $app = AppFactory::create();
         $app->addBodyParsingMiddleware();
+        $this->app = $app;
 
         $this->_initializeLoggers();
         $this->_initializeDatabase();
-        $this->_initializeErrorHandler($app);
+        $this->_initializeErrorHandler();
 
-        $app->add([$this, 'addJsonHeaderMiddleware']);
-        $this->_registerRoutes($app);
-
-        $this->app = $app;
+        $this->app->add([$this, 'addJsonHeaderMiddleware']);
+        $this->_registerRoutes();
     }
 
 
     /**
      * Main routes of application
      * 
-     * @param object $app Slim\App
-     * 
      * @return void
      */
-    private function _registerRoutes($app)
+    private function _registerRoutes()
     {
-        $app->get('/', [$this, 'actionIndex']);
-        $app->get('/users', [$this, 'actionGetUsers']);
-        $app->get('/loans[/{id}]', [$this, 'actionGetLoans']);
-        $app->put('/loans/{id}', [$this, 'actionUpdateLoans']);
-        $app->post('/loans', [$this, 'actionCreateLoan']);
-        $app->delete('/loans/{id}', [$this, 'actionDeleteLoan']);
+        $this->app->get('/', [$this, 'actionIndex']);
+        $this->app->get('/users[/{id}]', [$this, 'actionGetUsers']);
+        $this->app->get('/loans[/{id}]', [$this, 'actionGetLoans']);
+        $this->app->put('/loans/{id}', [$this, 'actionUpdateLoan']);
+        $this->app->put('/users/{id}', [$this, 'actionUpdateUser']);
+        $this->app->post('/loans', [$this, 'actionCreateLoan']);
+        $this->app->post('/users', [$this, 'actionCreateUser']);
+        $this->app->delete('/loans/{id}', [$this, 'actionDeleteLoan']);
+        $this->app->delete('/users/{id}', [$this, 'actionDeleteUser']);
     }
 
 
@@ -136,7 +136,8 @@ class RestAPI
     {
         $config = @parse_ini_file('config.ini', true);
         if (!isset($config['mysql'])) {
-            $this->_logAndTerminate('[mysql] header is missed in INI file', 500);
+            $this->_errorLogger->error('[mysql] header is missed in INI file');
+            $this->_logAndTerminate('Internal error was raised', 500);
         }
 
         $db = $config['mysql'];
@@ -166,11 +167,9 @@ class RestAPI
      * then write them in logfile
      * and return JSON answer to client
      * 
-     * @param object $app Rest\App
-     * 
      * @return void
      */
-    private function _initializeErrorHandler($app)
+    private function _initializeErrorHandler()
     {
         $errorHandler = function (
             Request $request,
@@ -179,7 +178,7 @@ class RestAPI
             bool $logErrors,
             bool $logErrorDetails,
             ?LoggerInterface $logger = null
-        ) use ($app) {
+        ) {
             $this->_errorLogger->error(
                 $exception->getMessage(), [
                 'page' => $request->getUri()->getPath(),
@@ -193,7 +192,7 @@ class RestAPI
                 'code' => $exception->getCode()
             ];
 
-            $response = $app->getResponseFactory()->createResponse();
+            $response = $this->app->getResponseFactory()->createResponse();
             $response->getBody()->write(
                 json_encode(
                     $payload,
@@ -206,7 +205,7 @@ class RestAPI
                 ->withStatus($exception->getCode());
         };
 
-        $errorMiddleware = $app->addErrorMiddleware(true, true, true);
+        $errorMiddleware = $this->app->addErrorMiddleware(true, true, true);
         $errorMiddleware->setDefaultErrorHandler($errorHandler);
     }
 
@@ -302,7 +301,8 @@ class RestAPI
      */
     public function actionGetUsers(Request $request, Response $response, $args)
     {
-        $res = $this->_mysqli->query('SELECT * FROM users');
+        $condition = (isset($args['id'])) ? ' WHERE id = ' . (int) $args['id'] : '';
+        $res = $this->_mysqli->query("SELECT * FROM users {$condition}");
         $responseMessage = ['status' => false, 'message' => 'Can\'t get data'];
 
         if ($res && $res->num_rows > 0) {
@@ -332,12 +332,12 @@ class RestAPI
      * 
      * @return Response $response
      */
-    public function actionUpdateLoans(Request $request, Response $response, $args)
+    public function actionUpdateLoan(Request $request, Response $response, $args)
     {
         $loanId = (int) $args['id'];
         $data = $this->_getJSON($request);
         if ($data === null) {
-            return $this->respondWithError($response, 'Invalid JSON format', 400);
+            return $this->_respondWithError($response, 'Invalid JSON format', 400);
         }
 
         $validParams = ['user_id', 'amount', 'create_time', 'pay_time'];
@@ -352,7 +352,7 @@ class RestAPI
         }
 
         if (empty($values)) {
-            return $this->respondWithError(
+            return $this->_respondWithError(
                 $response,
                 'No valid parameters provided',
                 400
@@ -385,6 +385,68 @@ class RestAPI
     }
 
 
+        /**
+         * Updating specific user by ID 
+         * GET param accept userId, POST accept only JSON
+         * 
+         * @param Request  $request  from Psr\Http\Message\ServerRequestInterface
+         * @param Response $response from Psr\Http\Message\ResponseInterface
+         * @param array    $args     $_GET data
+         * 
+         * @return Response $response
+         */
+    public function actionUpdateUser(Request $request, Response $response, $args)
+    {
+        $userId = (int) $args['id'];
+        $data = $this->_getJSON($request);
+        if ($data === null) {
+            return $this->_respondWithError($response, 'Invalid JSON format', 400);
+        }
+
+        $validParams = ['first_name', 'last_name', 'phone', 'birth_date'];
+        $values = [];
+        foreach ($validParams as $param) {
+            if (!isset($data[$param])) {
+                continue;
+            }
+
+            $value = $this->_mysqli->real_escape_string($data[$param]);
+            $values[] = "{$param} = '{$value}'";
+        }
+
+        if (empty($values)) {
+            return $this->_respondWithError(
+                $response,
+                'No valid parameters provided',
+                400
+            );
+        }
+
+        $values = join(',', $values);
+
+        $sql = "UPDATE users SET {$values} WHERE id = {$userId} LIMIT 1";
+        $status = false;
+        try {
+            $res = @$this->_mysqli->query($sql);
+            $responseMessage = [
+                'status'  => true,
+                'message' => 'User was successfully updated!',
+                'code'    => 200
+            ];
+        } catch (Exception $e) {
+            $this->_errorLogger->error($e->getMessage());
+            $responseMessage = [
+                'status'  => false,
+                'message' => "Internal server error",
+                'code'    => 500
+            ];
+        }
+
+        $response->getBody()->write(json_encode($responseMessage, 448));
+        return $response;
+    }
+
+
     /**
      * Create new loan with specified data
      * Accept only JSON
@@ -399,13 +461,13 @@ class RestAPI
     {
         $data = $this->_getJSON($request);
         if ($data === null) {
-            return $this->respondWithError($response, 'Invalid JSON format', 400);
+            return $this->_respondWithError($response, 'Invalid JSON format', 400);
         }
         $requiredParams = ['user_id', 'amount', 'pay_time'];
         $values = [];
         foreach ($requiredParams as $param) {
             if (!isset($data[$param])) {
-                return $this->respondWithError(
+                return $this->_respondWithError(
                     $response,
                     "Param \"{$param}\" is required!",
                     400
@@ -417,17 +479,90 @@ class RestAPI
         $values = join(', ', $values);
 
         $sql = "INSERT INTO loans (user_id, amount, pay_time) VALUES ($values)";
-        $res = $this->_mysqli->query($sql);
-        if ($res) {
+        try {
+            $res = $this->_mysqli->query($sql);
             $responseMessage = [
                 'status' => true,
                 'message' => 'success',
+                'code' => 200,
                 'row_id' => $this->_mysqli->insert_id
             ];
-        } else {
+        } catch (Exception $e) {
             $responseMessage = [
                 'status' => false,
-                'message' => 'Failed to create new loan'
+                'message' => $e->getCode() == 1452 
+                             ? 'Specified user_id does not exist!'
+                             : 'Internal error was raised',
+                'code' => $e->getCode() == 1452 ? 400 : 500
+            ];
+        }
+        $response->getBody()->write(json_encode($responseMessage, 448));
+        return $response;
+    }
+
+
+    /**
+     * Create new user with specified data
+     * Accept only JSON
+     * 
+     * @param Request  $request  from Psr\Http\Message\ServerRequestInterface
+     * @param Response $response from Psr\Http\Message\ResponseInterface
+     * @param array    $args     $_GET data
+     * 
+     * @return Response $response
+     */
+    public function actionCreateUser(Request $request, Response $response, $args)
+    {
+        $data = $this->_getJSON($request);
+        if ($data === null) {
+            return $this->_respondWithError($response, 'Invalid JSON format', 400);
+        }
+
+        $requiredParams = ['first_name', 'birth_date'];
+        $columns = [];
+        $values = [];
+        foreach ($requiredParams as $param) {
+            if (!isset($data[$param])) {
+                return $this->_respondWithError(
+                    $response,
+                    "Param \"{$param}\" is required!",
+                    400
+                );
+            }
+
+            $columns[] = $param;
+            $values[] = $this->_mysqli->real_escape_string($data[$param]);
+        }
+
+        $validParams = ['last_name', 'phone'];
+        foreach ($validParams as $param) {
+            if (!isset($data[$param])) {
+                continue;
+            }
+
+            $columns = $param;
+            $values[] = $this->_mysqli->real_escape_string($data[$param]);
+        }
+        $columns = join(',', $columns);
+        $values = "'" . join("', '", $values) . "'";
+
+        $sql = "INSERT INTO users ({$columns}) VALUES ($values)";
+        try {
+            $res = $this->_mysqli->query($sql);
+            $responseMessage = [
+                'status' => true,
+                'message' => 'success',
+                'code' => 200,
+                'row_id' => $this->_mysqli->insert_id
+            ];
+        } catch (Exception $e) {
+            $this->_errorLogger->error($e->getMessage());
+            $responseMessage = [
+                'status' => false,
+                'message' => $e->getCode() == 1292
+                             ? 'Incorrect date format!'
+                             : 'Internal server error',
+                'code' => $e->getCode() == 1292 ? 400 : 500
             ];
         }
         $response->getBody()->write(json_encode($responseMessage, 448));
@@ -465,6 +600,43 @@ class RestAPI
                 ->withAddedHeader('Content-type', 'application/json');
     }
 
+
+    /**
+     * Delete user by specified ID
+     * 
+     * @param Request  $request  from Psr\Http\Message\ServerRequestInterface
+     * @param Response $response from Psr\Http\Message\ResponseInterface
+     * @param array    $args     $_GET data
+     * 
+     * @return Response $response
+     */
+    public function actionDeleteUser(Request $request, Response $response, $args)
+    {
+        $userId = (int) $args['id'];
+        try {
+            $this->_mysqli->query("DELETE FROM users WHERE id = {$userId} LIMIT 1");
+            $responseMessage = [
+                'status' => true,
+                'message' => "User with ID {$userId} was successfully deleted!",
+                'code' => 200
+            ];
+        } catch (Exception $e) {
+            $this->_errorLogger->error($e->getMessage());
+            $responseMessage = [
+                'status' => false,
+                'message' => $e->getCode() == 1451
+                            ? 'Impossible to delete a user because he has loans'
+                            : 'Internal error was raised',
+                'code' => $e->getCode() == 1451 ? 400 : 500
+            ];
+        }
+    
+        $response->getBody()->write(json_encode($responseMessage, 448));
+        return $response
+                ->withAddedHeader('Content-type', 'application/json');
+    }
+
+
     /**
      * Get JSON information from request or php://input
      * 
@@ -474,15 +646,7 @@ class RestAPI
      */
     private function _getJSON(Request $request = null): ?array
     {
-        $result = null;
-        if (gettype($request) == 'object'
-            && method_exists($request, 'getParsedBody')
-        ) {
-            $result = $request->getParsedBody();
-        }
-        if (empty($result)) {
-            $result = json_decode(file_get_contents('php://input'), true);
-        }
+        $result = json_decode(file_get_contents('php://input'), true);
 
         // Проверяем, что данные были отправлены в формате JSON
         if (json_last_error() !== JSON_ERROR_NONE) {
@@ -507,16 +671,20 @@ class RestAPI
         string $message,
         int $statusCode
     ): Response {
-        $responseMessage = ['status' => false, 'message' => $message];
+        $responseMessage = [
+            'status' => false,
+            'message' => $message,
+            'code' => $statusCode
+        ];
         $response->getBody()->write(json_encode($responseMessage, 448));
         return $response->withStatus($statusCode);
     }
 
 
     /**
-     * If exception was raised or etc
+     * If exception was raised
      * BEFORE error collector initalize
-     * then will write error to log and return code
+     * then will write error to log and return code manually
      * 
      * @param string $message    message to output for user
      * @param int    $statusCode exit code
