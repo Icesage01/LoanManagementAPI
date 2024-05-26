@@ -2,9 +2,12 @@
     "require": {
         "slim/slim": "4.*",
         "guzzlehttp/psr7": "^2",
-        "sentry/sentry": "^4.7"
+        "monolog/monolog": "^3.6"
     },
     "require-dev": {
+        "slim/slim": "4.*",
+        "guzzlehttp/psr7": "^2",
+        "monolog/monolog": "^3.6",
         "phpunit/phpunit": "^11.1"
     }
 }
