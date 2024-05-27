@@ -49,18 +49,14 @@
 ```json
 {
     "status": true,
-    "message": "data got successfull",
+    "message": "Data retrieved successfully",
     "details": [
         {
-            "id": "1",
+            "id": "3",
             "user_id": "1",
-            "amount": "3000",
-            "create_time": "1716590548",
-            "pay_time": "1716590548",
-            "first_name": "Евгений",
-            "last_name": "Захаров",
-            "phone": "+79012345678",
-            "birth_date": "1997-04-18"
+            "amount": "4000",
+            "create_time": "1716796702",
+            "pay_time": "1716796702"
         }
     ]
 }
