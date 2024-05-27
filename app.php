@@ -1,13 +1,15 @@
 <?php
 
 /**
+ * Slim 4 based REST API Application
+ * PHP version 7.4
+ * 
  * @category App
  * @package  App
  * @author   Icesage <crescenti400@gmail.com>
  * @license  https://opensource.org/licenses/MIT MIT
- * @version  PHP 7.4
+ * @version  GIT: @1.0.0@
  * @link     https://github.com/Icesage01/LoanManagementAPI
- * Slim 4 based REST API Application
  */
 
 use Psr\Http\Message\ResponseInterface as Response;
@@ -21,6 +23,13 @@ use Monolog\Formatter\LineFormatter;
 
 require __DIR__ . '/vendor/autoload.php';
 
+/**
+ * Class RestAPI
+ * 
+ * Main Application class
+ * initialize all dependencies
+ * include mysqli, loggers and routings
+ */
 class RestAPI
 {
 
