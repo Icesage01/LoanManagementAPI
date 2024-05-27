@@ -181,8 +181,8 @@ class RestAPI
         ) {
             $this->_errorLogger->error(
                 $exception->getMessage(), [
-                'page' => $request->getUri()->getPath(),
-                'remote' => $request->getServerParams()['REMOTE_ADDR']
+                    'page' => $request->getUri()->getPath(),
+                    'remote' => $request->getServerParams()['REMOTE_ADDR']
                 ]
             );
 
@@ -200,9 +200,13 @@ class RestAPI
                 )
             );
 
+            $code = $exception->getCode();
+            if ($code < 200 || $code > 600) {
+                $code = 500;
+            }
             return $response
                 ->withHeader('Content-type', 'application/json')
-                ->withStatus($exception->getCode());
+                ->withStatus($code);
         };
 
         $errorMiddleware = $this->app->addErrorMiddleware(true, true, true);
@@ -223,12 +227,14 @@ class RestAPI
     {
         $response = $handler->handle($request);
         if ($response->getStatusCode() < 400) {
-            $message = $_SERVER['REMOTE_ADDR'];
-            $message .= " - {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']}";
+            $clientAddress = $request->getServerParams()['REMOTE_ADDR'];
+            $path = $request->getUri()->getPath();
+            $method = $request->getMethod();
             $this->_accessLogger->info(
-                $message, [
-                'body' => $request->getParsedBody(),
-                'response' => (string)$response->getBody()
+                "$clientAddress - $method $path",
+                [
+                    'body' => $request->getParsedBody(),
+                    'response' => (string)$response->getBody()
                 ]
             );
         }
@@ -360,6 +366,7 @@ class RestAPI
         }
 
         $values = join(',', $values);
+        $code = 200;
 
         $sql = "UPDATE loans SET {$values} WHERE id = {$loanId} LIMIT 1";
         $status = false;
@@ -371,6 +378,7 @@ class RestAPI
                 'code'    => 200
             ];
         } catch (Exception $e) {
+            $code = $e->getCode() == 1452 ? 400 : 500;
             $responseMessage = [
                 'status'  => false,
                 'message' => $e->getCode() == 1452 
@@ -381,20 +389,20 @@ class RestAPI
         }
 
         $response->getBody()->write(json_encode($responseMessage, 448));
-        return $response;
+        return $response->withStatus($code);
     }
 
 
-        /**
-         * Updating specific user by ID 
-         * GET param accept userId, POST accept only JSON
-         * 
-         * @param Request  $request  from Psr\Http\Message\ServerRequestInterface
-         * @param Response $response from Psr\Http\Message\ResponseInterface
-         * @param array    $args     $_GET data
-         * 
-         * @return Response $response
-         */
+    /**
+     * Updating specific user by ID 
+     * GET param accept userId, POST accept only JSON
+     * 
+     * @param Request  $request  from Psr\Http\Message\ServerRequestInterface
+     * @param Response $response from Psr\Http\Message\ResponseInterface
+     * @param array    $args     $_GET data
+     * 
+     * @return Response $response
+     */
     public function actionUpdateUser(Request $request, Response $response, $args)
     {
         $userId = (int) $args['id'];
@@ -463,6 +471,9 @@ class RestAPI
         if ($data === null) {
             return $this->_respondWithError($response, 'Invalid JSON format', 400);
         }
+
+        $code = 200;
+
         $requiredParams = ['user_id', 'amount', 'pay_time'];
         $values = [];
         foreach ($requiredParams as $param) {
@@ -484,20 +495,22 @@ class RestAPI
             $responseMessage = [
                 'status' => true,
                 'message' => 'success',
-                'code' => 200,
+                'code' => $code,
                 'row_id' => $this->_mysqli->insert_id
             ];
         } catch (Exception $e) {
+            $code = $e->getCode() == 1452 ? 400 : 500;
             $responseMessage = [
                 'status' => false,
                 'message' => $e->getCode() == 1452 
                              ? 'Specified user_id does not exist!'
                              : 'Internal error was raised',
-                'code' => $e->getCode() == 1452 ? 400 : 500
+                'code' => $code
             ];
         }
+
         $response->getBody()->write(json_encode($responseMessage, 448));
-        return $response;
+        return $response->withStatus($code);
     }
 
 
@@ -518,7 +531,7 @@ class RestAPI
             return $this->_respondWithError($response, 'Invalid JSON format', 400);
         }
 
-        $requiredParams = ['first_name', 'birth_date'];
+        $requiredParams = ['first_name', 'last_name'];
         $columns = [];
         $values = [];
         foreach ($requiredParams as $param) {
@@ -534,13 +547,13 @@ class RestAPI
             $values[] = $this->_mysqli->real_escape_string($data[$param]);
         }
 
-        $validParams = ['last_name', 'phone'];
+        $validParams = ['phone', 'birth_date'];
         foreach ($validParams as $param) {
             if (!isset($data[$param])) {
                 continue;
             }
 
-            $columns = $param;
+            $columns[] = $param;
             $values[] = $this->_mysqli->real_escape_string($data[$param]);
         }
         $columns = join(',', $columns);
@@ -646,12 +659,16 @@ class RestAPI
      */
     private function _getJSON(Request $request = null): ?array
     {
-        $result = json_decode(file_get_contents('php://input'), true);
+        $result = json_decode((string) $request->getBody(), true);
+        if (empty($result)) {
+            $result = json_decode(file_get_contents('php://input'), true);
+        }
 
         // Проверяем, что данные были отправлены в формате JSON
         if (json_last_error() !== JSON_ERROR_NONE) {
             $result = null;
         }
+
         return $result;
     }
 
