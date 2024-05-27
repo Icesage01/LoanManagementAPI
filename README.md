@@ -22,7 +22,7 @@
 <br/>
 `POST /loans` | `PUT /loans/{id}`
 <br/>
-Принимает следующие параметры
+Принимает следующие параметры<br/>
 `int` user_id - ID пользователя из `GET /users/{id}`<br/>
 `int` amount - сумма займа<br/>
 `int` create_time - дата создания<br/>
@@ -39,7 +39,7 @@
 <br/>
 `POST /users` | `PUT /users/{id}`
 
-Принимает следующие параметры
+Принимает следующие параметры<br/>
 `string` first_name - Имя пользователя<br/>
 `string` last_name - Фамилия пользователя<br/>
 `string` phone - Телефон пользователя<br/>
