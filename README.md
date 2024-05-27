@@ -18,9 +18,9 @@
 
 ## Примеры
 
-Отправка/получение запросов происходит в JSON, поэтому важно указать в заголовках `content-type: application/json`
+Отправка/получение запросов происходит в JSON, поэтому важно указать в заголовках `Content-Type: application/json`
 <br/>
-`POST /loans` | `PUT /loans/{id}`
+`POST /loans` / `PUT /loans/{id}`
 <br/>
 Принимает следующие параметры<br/>
 `int` user_id - ID пользователя из `GET /users/{id}`<br/>
@@ -37,14 +37,25 @@
 }
 ```
 <br/>
-`POST /users` | `PUT /users/{id}`
+
+`POST /users` / `PUT /users/{id}`
 
 Принимает следующие параметры<br/>
 `string` first_name - Имя пользователя<br/>
 `string` last_name - Фамилия пользователя<br/>
 `string` phone - Телефон пользователя<br/>
 `date` birth_date - Дата рождения в формате YYYY-MM-DD<br/>
+
+```json
+{
+"first_name ": "Захар",
+"last_name ": "Смирнов",
+"phone ": "+79876543210",
+"birth_date ": "1997-05-05"
+}
+```
 <br/>
+
 `GET /loans/{id}`
 ```json
 {
@@ -61,11 +72,23 @@
     ]
 }
 ```
-Ошибка
+Примеры ошибок
 ```json
 {
     "status": false,
     "message": "empty data"
+}
+```
+```json
+{
+    "status": false,
+    "message": "Param 'pay_time' is required!"
+}
+```
+```json
+{
+    "status": false,
+    "message": "Invalid JSON format"
 }
 ```
 ## Использованные технологии и требования
@@ -74,7 +97,7 @@
 - PHP микрофреймворк: [Slim](https://github.com/slimphp/Slim)
 - Линтер: [PHP_CodeSniffer](https://github.com/squizlabs/PHP_CodeSniffer)
 - Миграция базы данных: [Phynx](https://phinx.org/)
-- MySQL Server: [MySQL](https://www.mysql.com/) (Необходима ручная установка)
+- MySQL Server: [MySQL](https://www.mysql.com/)
 
 ## Запуск приложения
 
@@ -82,7 +105,7 @@
 2. Установить зависимости с помощью команды `composer install`.
 3. Настроить подключение к базе данных через файл `config.ini`
 4. Запустить миграцию `php ./vendor/bin/phinx migrate -e development`.
-5. Запустить сервер с помощью команды `php -S localhost:8000 -t public` **ИЛИ **настроив соответствующий роут/виртуальный хост в конфигурации используемого веб-сервера (Пр. Apache, файл .htaccess в репозитории имеет нужные настройки)
+5. Запустить сервер с помощью команды `php -S localhost:8000 index.php` ИЛИ настроив соответствующий роут/виртуальный хост в конфигурации используемого веб-сервера (Пр. Apache, файл .htaccess в репозитории имеет нужные настройки)
 6. Теперь можно пользоваться приложением `http://localhost:8000`.
 
 ## Тестирование
