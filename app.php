@@ -272,16 +272,7 @@ class RestAPI
     public function actionGetLoans(Request $request, Response $response, $args)
     {
         $condition = (isset($args['id'])) ? 'WHERE l.id = ' . (int) $args['id'] : '';
-        $sql = <<<SQL
-        SELECT
-            l.id AS id, user_id, amount,
-            create_time, pay_time
-        FROM loans AS l
-        LEFT JOIN users AS u
-            ON l.user_id = u.id
-        {$condition}
-        ORDER BY l.create_time, amount
-        SQL;
+        $sql = "SELECT * FROM loans {$condition} ORDER BY create_time, amount";
 
         $res = $this->_mysqli->query($sql);
         $responseMessage = ['status' => false, 'message' => 'empty data'];
