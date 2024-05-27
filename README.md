@@ -19,14 +19,14 @@
 ## Примеры
 
 Отправка/получение запросов происходит в JSON, поэтому важно указать в заголовках `content-type: application/json`
-
+<br/>
 `POST /loans` | `PUT /loans/{id}`
-
+<br/>
 Принимает следующие параметры
-`int` user_id - ID пользователя из `GET /users/{id}`
-`int` amount - сумма займа
-`int` create_time - дата создания
-`int` pay_time - дата выплаты
+`int` user_id - ID пользователя из `GET /users/{id}`<br/>
+`int` amount - сумма займа<br/>
+`int` create_time - дата создания<br/>
+`int` pay_time - дата выплаты<br/>
 
 ```json
 {
@@ -36,15 +36,15 @@
 "pay_time": 1633075600
 }
 ```
+<br/>
 `POST /users` | `PUT /users/{id}`
 
 Принимает следующие параметры
-`string` first_name - Имя пользователя
-`string` last_name - Фамилия пользователя
-`string` phone - Телефон пользователя
-`date` birth_date - Дата рождения в формате YYYY-MM-DD
-
-
+`string` first_name - Имя пользователя<br/>
+`string` last_name - Фамилия пользователя<br/>
+`string` phone - Телефон пользователя<br/>
+`date` birth_date - Дата рождения в формате YYYY-MM-DD<br/>
+<br/>
 `GET /loans/{id}`
 ```json
 {
